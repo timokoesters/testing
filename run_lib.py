@@ -55,6 +55,7 @@ def train(config, workdir):
 
   # Create directories for experimental logs
   sample_dir = os.path.join(workdir, "samples")
+  sample_dir = os.path.join(sample_dir, str(int(time.time())))
   tf.io.gfile.makedirs(sample_dir)
 
   tb_dir = os.path.join(workdir, "tensorboard")
@@ -156,7 +157,7 @@ def train(config, workdir):
       if config.training.snapshot_sampling:
         ema.store(score_model.parameters())
         ema.copy_to(score_model.parameters())
-        sample, n = sampling_fn(score_model)
+        sample, n = sampling_fn(score_model, sample_dir)
         ema.restore(score_model.parameters())
         this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
         tf.io.gfile.makedirs(this_sample_dir)

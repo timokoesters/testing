@@ -18,6 +18,11 @@
 """Various sampling methods."""
 import functools
 
+import os
+import tensorflow as tf
+from torchvision.utils import make_grid, save_image
+import logging
+from utils import eprint
 import torch
 import numpy as np
 import abc
@@ -387,7 +392,7 @@ def get_pc_sampler(sde, shape, predictor, corrector, inverse_scaler, snr,
                                           snr=snr,
                                           n_steps=n_steps)
 
-  def pc_sampler(model):
+  def pc_sampler(model, sample_dir):
     """ The PC sampler funciton.
 
     Args:
@@ -401,10 +406,14 @@ def get_pc_sampler(sde, shape, predictor, corrector, inverse_scaler, snr,
       timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
 
       for i in range(sde.N):
+        eprint("\nSampling: {}/{}\n".format(i, sde.N), end='')
         t = timesteps[i]
         vec_t = torch.ones(shape[0], device=t.device) * t
         x, x_mean = corrector_update_fn(x, vec_t, model=model)
         x, x_mean = predictor_update_fn(x, vec_t, model=model)
+        if i % 2 == 0:
+          save_sample(sample_dir, 0, i, inverse_scaler(x))
+
 
       return inverse_scaler(x_mean if denoise else x), sde.N * (n_steps + 1)
 
@@ -483,3 +492,18 @@ def get_ode_sampler(sde, shape, inverse_scaler,
       return x, nfe
 
   return ode_sampler
+
+
+def save_sample(sample_dir, step, iter, sample):
+    this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
+    tf.io.gfile.makedirs(this_sample_dir)
+    nrow = int(np.sqrt(sample.shape[0]))
+    image_grid = make_grid(sample, nrow, padding=2)
+    sample = np.clip(sample.permute(0, 2, 3, 1).cpu().numpy() * 255, 0, 255).astype(np.uint8)
+    #with tf.io.gfile.GFile(
+    #    os.path.join(this_sample_dir, "sample_{}.np".format(iter)), "wb") as fout:
+    #    np.save(fout, sample)
+
+    with tf.io.gfile.GFile(
+        os.path.join(this_sample_dir, "sample_{}.png".format(iter)), "wb") as fout:
+        save_image(image_grid, fout)
