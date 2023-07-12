@@ -20,6 +20,7 @@ import gc
 import io
 import os
 import time
+import sys
 
 import numpy as np
 import tensorflow as tf
@@ -38,11 +39,9 @@ import sde_lib
 from absl import flags
 import torch
 from torch.utils import tensorboard
-from torchvision.utils import make_grid, save_image
-from utils import save_checkpoint, restore_checkpoint
+from utils import eprint, save_checkpoint, restore_checkpoint
 
 FLAGS = flags.FLAGS
-
 
 def train(config, workdir):
   """Runs the training pipeline.
@@ -53,19 +52,15 @@ def train(config, workdir):
       contains checkpoint training will be resumed from the latest checkpoint.
   """
 
-  # Create directories for experimental logs
   sample_dir = os.path.join(workdir, "samples")
+  sample_dir = os.path.join(sample_dir, str(int(time.time())))
   tf.io.gfile.makedirs(sample_dir)
 
-  tb_dir = os.path.join(workdir, "tensorboard")
-  tf.io.gfile.makedirs(tb_dir)
-  writer = tensorboard.SummaryWriter(tb_dir)
-
   # Initialize model.
-  score_model = mutils.create_model(config)
-  ema = ExponentialMovingAverage(score_model.parameters(), decay=config.model.ema_rate)
-  optimizer = losses.get_optimizer(config, score_model.parameters())
-  state = dict(optimizer=optimizer, model=score_model, ema=ema, step=0)
+  model = mutils.create_model(config)
+  ema = ExponentialMovingAverage(model.parameters(), decay=config.model.ema_rate)
+  optimizer = losses.get_optimizer(config, model.parameters())
+  state = dict(optimizer=optimizer, model=model, ema=ema, step=0)
 
   # Create checkpoints directory
   checkpoint_dir = os.path.join(workdir, "checkpoints")
@@ -80,46 +75,22 @@ def train(config, workdir):
   # Build data iterators
   train_ds, eval_ds, _ = datasets.get_dataset(config,
                                               uniform_dequantization=config.data.uniform_dequantization)
-  train_iter = iter(train_ds)  # pytype: disable=wrong-arg-types
-  eval_iter = iter(eval_ds)  # pytype: disable=wrong-arg-types
+  train_iter = iter(train_ds)
+  eval_iter = iter(eval_ds)
   # Create data normalizer and its inverse
   scaler = datasets.get_data_scaler(config)
   inverse_scaler = datasets.get_data_inverse_scaler(config)
 
-  # Setup SDEs
-  if config.training.sde.lower() == 'vpsde':
-    sde = sde_lib.VPSDE(beta_min=config.model.beta_min, beta_max=config.model.beta_max, N=config.model.num_scales)
-    sampling_eps = 1e-3
-  elif config.training.sde.lower() == 'subvpsde':
-    sde = sde_lib.subVPSDE(beta_min=config.model.beta_min, beta_max=config.model.beta_max, N=config.model.num_scales)
-    sampling_eps = 1e-3
-  elif config.training.sde.lower() == 'vesde':
-    sde = sde_lib.VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=config.model.num_scales)
-    sampling_eps = 1e-5
-  else:
-    raise NotImplementedError(f"SDE {config.training.sde} unknown.")
-
-  # Build one-step training and evaluation functions
-  optimize_fn = losses.optimization_manager(config)
-  continuous = config.training.continuous
-  reduce_mean = config.training.reduce_mean
-  likelihood_weighting = config.training.likelihood_weighting
-  train_step_fn = losses.get_step_fn(sde, train=True, optimize_fn=optimize_fn,
-                                     reduce_mean=reduce_mean, continuous=continuous,
-                                     likelihood_weighting=likelihood_weighting)
-  eval_step_fn = losses.get_step_fn(sde, train=False, optimize_fn=optimize_fn,
-                                    reduce_mean=reduce_mean, continuous=continuous,
-                                    likelihood_weighting=likelihood_weighting)
+  # Always use VESDE
+  sde = sde_lib.VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=config.model.num_scales)
+  sampling_eps = 1e-5
 
   # Building sampling functions
-  if config.training.snapshot_sampling:
-    sampling_shape = (config.training.batch_size, config.data.num_channels,
-                      config.data.image_size, config.data.image_size)
-    sampling_fn = sampling.get_sampling_fn(config, sde, sampling_shape, inverse_scaler, sampling_eps)
+  sampling_shape = (config.training.batch_size, config.data.num_channels,
+                    config.data.image_size, config.data.image_size)
 
   num_train_steps = config.training.n_iters
 
-  # In case there are multiple hosts (e.g., TPU pods), only log to host 0
   logging.info("Starting training loop at step %d." % (initial_step,))
 
   for step in range(initial_step, num_train_steps + 1):
@@ -128,23 +99,23 @@ def train(config, workdir):
     batch = batch.permute(0, 3, 1, 2)
     batch = scaler(batch)
     # Execute one training step
-    loss = train_step_fn(state, batch)
+    loss = losses.step_fn(state, sde, batch, config, train)
     if step % config.training.log_freq == 0:
       logging.info("step: %d, training_loss: %.5e" % (step, loss.item()))
-      writer.add_scalar("training_loss", loss, step)
 
     # Save a temporary checkpoint to resume training after pre-emption periodically
     if step != 0 and step % config.training.snapshot_freq_for_preemption == 0:
       save_checkpoint(checkpoint_meta_dir, state)
 
     # Report the loss on an evaluation dataset periodically
+    eprint("\rTraining: {}/{}".format(step, num_train_steps), end='')
     if step % config.training.eval_freq == 0:
+      eprint();
       eval_batch = torch.from_numpy(next(eval_iter)['image']._numpy()).to(config.device).float()
       eval_batch = eval_batch.permute(0, 3, 1, 2)
       eval_batch = scaler(eval_batch)
-      eval_loss = eval_step_fn(state, eval_batch)
+      eval_loss = losses.step_fn(state, sde, eval_batch, config, train)
       logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss.item()))
-      writer.add_scalar("eval_loss", eval_loss.item(), step)
 
     # Save a checkpoint periodically and generate samples if needed
     if step != 0 and step % config.training.snapshot_freq == 0 or step == num_train_steps:
@@ -154,22 +125,10 @@ def train(config, workdir):
 
       # Generate and save samples
       if config.training.snapshot_sampling:
-        ema.store(score_model.parameters())
-        ema.copy_to(score_model.parameters())
-        sample, n = sampling_fn(score_model)
-        ema.restore(score_model.parameters())
-        this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
-        tf.io.gfile.makedirs(this_sample_dir)
-        nrow = int(np.sqrt(sample.shape[0]))
-        image_grid = make_grid(sample, nrow, padding=2)
-        sample = np.clip(sample.permute(0, 2, 3, 1).cpu().numpy() * 255, 0, 255).astype(np.uint8)
-        with tf.io.gfile.GFile(
-            os.path.join(this_sample_dir, "sample.np"), "wb") as fout:
-          np.save(fout, sample)
-
-        with tf.io.gfile.GFile(
-            os.path.join(this_sample_dir, "sample.png"), "wb") as fout:
-          save_image(image_grid, fout)
+        ema.store(model.parameters())
+        ema.copy_to(model.parameters())
+        sample, n = sampling.pc_sampler(sample_dir, step, model, sde, sampling_shape, inverse_scaler, config.sampling.snr, config.sampling.n_steps_each, config.sampling.probability_flow, config.training.continuous, config.sampling.noise_removal, config.device, sampling_eps)
+        ema.restore(model.parameters())
 
 
 def evaluate(config,
@@ -224,7 +183,7 @@ def evaluate(config,
     likelihood_weighting = config.training.likelihood_weighting
 
     reduce_mean = config.training.reduce_mean
-    eval_step = losses.get_step_fn(sde, train=False, optimize_fn=optimize_fn,
+    eval_step = losses.get_step_fn(sde, train=False,
                                    reduce_mean=reduce_mean,
                                    continuous=continuous,
                                    likelihood_weighting=likelihood_weighting)
@@ -252,7 +211,6 @@ def evaluate(config,
     sampling_shape = (config.eval.batch_size,
                       config.data.num_channels,
                       config.data.image_size, config.data.image_size)
-    sampling_fn = sampling.get_sampling_fn(config, sde, sampling_shape, inverse_scaler, sampling_eps)
 
   # Use inceptionV3 for images with resolution higher than 256.
   inceptionv3 = config.data.image_size >= 256
@@ -336,7 +294,7 @@ def evaluate(config,
         this_sample_dir = os.path.join(
           eval_dir, f"ckpt_{ckpt}")
         tf.io.gfile.makedirs(this_sample_dir)
-        samples, n = sampling_fn(score_model)
+        samples, n = sampling.pc_sampler(score_model, sde, sampling_shape, sampling.get_predictor(config.sampling.predictor.lower()), corrector, inverse_scaler, config.snr, config.sampling.n_steps, config.sampling.probability_flow, config.sampling.noise_removal.denoise, config.device)
         samples = np.clip(samples.permute(0, 2, 3, 1).cpu().numpy() * 255., 0, 255).astype(np.uint8)
         samples = samples.reshape(
           (-1, config.data.image_size, config.data.image_size, config.data.num_channels))

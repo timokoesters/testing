@@ -1,6 +1,7 @@
 import torch
 import tensorflow as tf
 import os
+import sys
 import logging
 
 
@@ -27,3 +28,6 @@ def save_checkpoint(ckpt_dir, state):
     'step': state['step']
   }
   torch.save(saved_state, ckpt_dir)
+  
+def eprint(*args, **kwargs):
+  print(*args, file=sys.stderr, **kwargs)
