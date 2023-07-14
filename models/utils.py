@@ -19,6 +19,7 @@
 import torch
 import sde_lib
 import numpy as np
+from utils import eprint
 
 import logging
 
@@ -91,8 +92,7 @@ def create_model(config):
   model_name = config.model.name
   score_model = get_model(model_name)(config)
   score_model = score_model.to(config.device)
-  if config.device != 'cpu':
-    score_model = torch.nn.DataParallel(score_model)
+  #score_model = torch.nn.DataParallel(score_model)
   return score_model
 
 
@@ -111,6 +111,7 @@ def model_fn(model, x, labels, train):
     model.eval()
     return model(x, labels)
   else:
+    eprint("train")
     model.train()
     return model(x, labels)
 

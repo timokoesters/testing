@@ -16,6 +16,10 @@
 # pylint: skip-file
 """Training and evaluation for score-based generative models. """
 
+# import to get rid of this error:
+#undefined symbol: cudaGraphDebugDotPrint, version libcudart.so.11.0
+import torch
+
 import gc
 import io
 import os
