@@ -35,6 +35,11 @@ flags.mark_flags_as_required(["workdir", "config", "mode"])
 
 
 def main(argv):
+  physical_devices = tf.config.list_physical_devices('GPU') 
+  try:
+    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+  except: pass
+  
   if FLAGS.mode == "train":
     # Create the working directory
     tf.io.gfile.makedirs(FLAGS.workdir)

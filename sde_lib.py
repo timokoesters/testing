@@ -6,7 +6,7 @@ import numpy as np
 
 
 class VESDE:
-  def __init__(self, sigma_min=0.01, sigma_max=50, N=1000):
+  def __init__(self, sigma_min, sigma_max, N, device):
     """Construct a Variance Exploding SDE.
 
     Args:
@@ -16,7 +16,7 @@ class VESDE:
     """
     self.sigma_min = sigma_min
     self.sigma_max = sigma_max
-    self.discrete_sigmas = torch.exp(torch.linspace(np.log(self.sigma_min), np.log(self.sigma_max), N))
+    self.discrete_sigmas = torch.exp(torch.linspace(np.log(self.sigma_min), np.log(self.sigma_max), N, device=device))
     self.N = N
 
   @property

@@ -19,6 +19,7 @@
 import torch
 import sde_lib
 import numpy as np
+import time
 from utils import eprint
 
 import logging
@@ -111,7 +112,6 @@ def model_fn(model, x, labels, train):
     model.eval()
     return model(x, labels)
   else:
-    eprint("train")
     model.train()
     return model(x, labels)
 

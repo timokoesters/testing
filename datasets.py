@@ -17,6 +17,8 @@
 """Return training and evaluation/test datasets from config files."""
 import tensorflow as tf
 import tensorflow_datasets as tfds
+import time
+from utils import eprint
 
 
 def get_data_scaler(config):
@@ -83,12 +85,21 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
 
   # Reduce this when image resolution is too large and data pointer is stored
   shuffle_buffer_size = 10000
-  prefetch_size = tf.data.experimental.AUTOTUNE
+  prefetch_size = 1000
   num_epochs = None if not evaluation else 1
 
   # Create dataset builders for each dataset.
   if config.data.dataset == 'CIFAR10':
     dataset_builder = tfds.builder('cifar10')
+    train_split_name = 'train'
+    eval_split_name = 'test'
+
+    def resize_op(img):
+      img = tf.image.convert_image_dtype(img, tf.float32)
+      return tf.image.resize(img, [config.data.image_size, config.data.image_size], antialias=True)
+
+  elif config.data.dataset == 'MNIST':
+    dataset_builder = tfds.builder('mnist')
     train_split_name = 'train'
     eval_split_name = 'test'
 
@@ -171,9 +182,6 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
 
   def create_dataset(dataset_builder, split):
     dataset_options = tf.data.Options()
-    dataset_options.experimental_optimization.map_parallelization = True
-    dataset_options.experimental_threading.private_threadpool_size = 48
-    dataset_options.experimental_threading.max_intra_op_parallelism = 1
     read_config = tfds.ReadConfig(options=dataset_options)
     if isinstance(dataset_builder, tfds.core.DatasetBuilder):
       dataset_builder.download_and_prepare()
@@ -183,7 +191,7 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
       ds = dataset_builder.with_options(dataset_options)
     ds = ds.repeat(count=num_epochs)
     ds = ds.shuffle(shuffle_buffer_size)
-    ds = ds.map(preprocess_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    ds = ds.map(preprocess_fn)
     ds = ds.batch(batch_size, drop_remainder=True)
     return ds.prefetch(prefetch_size)
 

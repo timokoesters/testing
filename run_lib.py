@@ -28,7 +28,6 @@ import sys
 
 import numpy as np
 import tensorflow as tf
-import tensorflow_gan as tfgan
 import logging
 # Keep the import below for registering all model definitions
 from models import ddpm, ncsnv2, ncsnpp
@@ -37,7 +36,7 @@ import sampling
 from models import utils as mutils
 from models.ema import ExponentialMovingAverage
 import datasets
-import evaluation
+#import evaluation
 import likelihood
 import sde_lib
 from absl import flags
@@ -86,7 +85,7 @@ def train(config, workdir):
   inverse_scaler = datasets.get_data_inverse_scaler(config)
 
   # Always use VESDE
-  sde = sde_lib.VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=config.model.num_scales)
+  sde = sde_lib.VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=config.model.num_scales, device=config.device)
   sampling_eps = 1e-5
 
   # Building sampling functions
@@ -105,7 +104,7 @@ def train(config, workdir):
     # Execute one training step
     loss = losses.step_fn(state, sde, batch, config, train)
     if step % config.training.log_freq == 0:
-      logging.info("step: %d, training_loss: %.5e" % (step, loss.item()))
+      logging.info("\nstep: %d, training_loss: %.5e" % (step, loss.item()))
 
     # Save a temporary checkpoint to resume training after pre-emption periodically
     if step != 0 and step % config.training.snapshot_freq_for_preemption == 0:
@@ -119,10 +118,11 @@ def train(config, workdir):
       eval_batch = eval_batch.permute(0, 3, 1, 2)
       eval_batch = scaler(eval_batch)
       eval_loss = losses.step_fn(state, sde, eval_batch, config, train)
-      logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss.item()))
+      logging.info("\nstep: %d, eval_loss: %.5e" % (step, eval_loss.item()))
 
     # Save a checkpoint periodically and generate samples if needed
-    if step != 0 and step % config.training.snapshot_freq == 0 or step == num_train_steps:
+    if step != -1 and step % config.training.snapshot_freq == 0 or step == num_train_steps:
+      eprint();
       # Save the checkpoint.
       save_step = step // config.training.snapshot_freq
       save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint_{save_step}.pth'), state)
@@ -131,7 +131,7 @@ def train(config, workdir):
       if config.training.snapshot_sampling:
         ema.store(model.parameters())
         ema.copy_to(model.parameters())
-        sample, n = sampling.pc_sampler(sample_dir, step, model, sde, sampling_shape, inverse_scaler, config.sampling.snr, config.sampling.n_steps_each, config.sampling.probability_flow, config.training.continuous, config.sampling.noise_removal, config.device, sampling_eps)
+        sample, n = sampling.euler_sampler(sample_dir, step, model, sde, sampling_shape, inverse_scaler, config.sampling.snr, config.sampling.n_steps_each, config.sampling.probability_flow, config.training.continuous, config.sampling.noise_removal, config.device, sampling_eps)
         ema.restore(model.parameters())
 
 

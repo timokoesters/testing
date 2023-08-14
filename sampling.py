@@ -52,11 +52,9 @@ def reverse_diffusion_discretize(x, t, model, sde):
 
 def reverse_diffusion_update_fn(model, sde, x, t):
   f, G = reverse_diffusion_discretize(x, t, model, sde)
-  eprint("f", f[0, 0, 0, 0])
   z = torch.randn_like(x)
   x_mean = x - f
   noise2 = 1.00 * G[:, None, None, None] * z
-  eprint("noise2", noise2[0, 0, 0, 0])
   x = x_mean + noise2
   return x, x_mean
 
@@ -65,49 +63,96 @@ def langevin_update_fn(model, sde, x, t, target_snr, n_steps):
 
   for i in range(n_steps):
     grad = mutils.score_fn(model, sde, x, t, train=False)
-    eprint("grad", grad[0, 0, 0, 0])
     noise = torch.randn_like(x)
     grad_norm = torch.norm(grad.reshape(grad.shape[0], -1), dim=-1).mean()
     noise_norm = torch.norm(noise.reshape(noise.shape[0], -1), dim=-1).mean()
     step_size = (target_snr * noise_norm / grad_norm) ** 2 * 2 * alpha
     diff = step_size[:, None, None, None] * grad
-    eprint("diff", diff[0, 0, 0, 0])
     x_mean = x + diff
     noise2 = 1.00 * torch.sqrt(step_size * 2)[:, None, None, None] * noise
-    eprint("noise2", noise2[0, 0, 0, 0])
     x = x_mean + noise2
 
   return x, x_mean
 
+def ve_sde(x, t):
+  sigma_min = 0.01
+  sigma_max = 50.0
+  sigma = sigma_min * (sigma_max /sigma_min) ** t
+  drift = torch.zeros_like(x)
+  diffusion = sigma * torch.sqrt(torch.tensor(2 * (np.log(sigma_max) - np.log(sigma_min)),
+                                              device=t.device))
+  return drift, diffusion
+
+
+def reverse_sde(model, sde, x, t):
+  drift, diffusion = ve_sde(x, t)
+  score = mutils.score_fn(model, sde, x, t, False)
+  drift = drift - diffusion[:, None, None, None] ** 2 * score
+  return score, drift, diffusion
+
+
+def euler_sampler(sample_dir, step, model, sde, shape, inverse_scaler, snr, n_steps, probability_flow, continuous, denoise, device, eps):
+  # Initial sample
+  x = sde.prior_sampling(shape).to(device)
+  timesteps = torch.linspace(eps, sde.T, sde.N, device=device)
+
+  for i in reversed(range(0, sde.N)):
+    eprint("\rSampling: {}/{}".format(sde.N-i, sde.N), end='')
+
+    x = x.requires_grad_()
+
+    t = timesteps[i]
+    vec_t = torch.ones(shape[0], device=t.device) * t
+    dt = -1.0 / sde.N
+    z = torch.randn_like(x)
+    score, drift, diffusion = reverse_sde(model, sde, x, vec_t)
+    x_mean = x + drift * dt
+    new_x = x_mean + diffusion[:, None, None, None] * np.sqrt(-dt) * z
+
+    target = torch.zeros_like(x[0])
+    target[0,[0, 1, 30, 31],:] = 1.00
+    target[1,[0, 1, 30, 31],:] = 1.00
+    target[2,[0, 1, 30, 31],:] = 1.00
+    mask = target != 0.0
+
+    timestep = (t * (sde.N - 1) / sde.T).long()
+    sigma = sde.discrete_sigmas.to(t.device)[timestep]
+    x_tweedie = x + sigma*sigma * score  
+    losses = torch.square(mask * (target - x_tweedie))
+    losses = torch.mean(losses.reshape(losses.shape[0], -1), dim=-1)
+    x_grad = torch.autograd.grad(losses, x)[0]
+
+    new_x -= 1.0 / torch.sqrt(losses) * x_grad
+
+    # manifold constraint
+    z = torch.randn_like(x)
+    mean, std = sde.marginal_prob(target, t)
+    perturbed_data = mean + std * z
+    new_x = mask * perturbed_data + (~mask) * new_x
+
+    x = new_x.detach()
+
+    if i % 25 == 0:
+      save_sample(sample_dir, step, sde.N-i, inverse_scaler(x_tweedie.detach()))
+
+  eprint()
+
+  return inverse_scaler(x), sde.N * (n_steps + 1)
 
 def pc_sampler(sample_dir, step, model, sde, shape, inverse_scaler, snr, n_steps, probability_flow, continuous, denoise, device, eps):
-  eprint("sample_dir:", sample_dir)
-  eprint("step", step)
-  eprint("model", model)
-  eprint("sde", sde.discrete_sigmas)
-  eprint("shape", shape)
-  eprint("inverse_scaler", inverse_scaler)
-  eprint("snr", snr)
-  eprint("n_steps", n_steps)
-  eprint("probability_flow", probability_flow)
-  eprint("continuous", continuous)
-  eprint("denoise", denoise)
-  eprint("eps", eps)
   with torch.no_grad():
     # Initial sample
     x = sde.prior_sampling(shape).to(device)
     timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
 
     for i in range(0, sde.N):
-      eprint("\nSampling: {}/{}\n".format(i, sde.N), end='')
+      eprint("\rSampling: {}/{}".format(i, sde.N), end='')
       t = timesteps[i]
       vec_t = torch.ones(shape[0], device=t.device) * t
       x, x_mean = langevin_update_fn(model, sde, x, vec_t, snr, n_steps)
-      eprint("x", x[0, :, 0, 0])
       x, x_mean = reverse_diffusion_update_fn(model, sde, x, vec_t)
-      eprint("x", x[0, :, 0, 0])
-      if i % 2 == 0:
-          save_sample(sample_dir, step, i, inverse_scaler(x))
+      if i % 50 == 0:
+          save_sample(sample_dir, step, i, inverse_scaler(x_mean))
 
     eprint()
     return inverse_scaler(x_mean if denoise else x), sde.N * (n_steps + 1)
