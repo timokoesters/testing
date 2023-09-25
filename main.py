@@ -28,7 +28,7 @@ FLAGS = flags.FLAGS
 config_flags.DEFINE_config_file(
   "config", None, "Training configuration.", lock_config=True)
 flags.DEFINE_string("workdir", None, "Work directory.")
-flags.DEFINE_enum("mode", None, ["train", "eval"], "Running mode: train or eval")
+flags.DEFINE_enum("mode", None, ["train", "eval", "sample"], "Running mode: train or eval or sample")
 flags.DEFINE_string("eval_folder", "eval",
                     "The folder name for storing evaluation results")
 flags.mark_flags_as_required(["workdir", "config", "mode"])
@@ -54,6 +54,20 @@ def main(argv):
     logger.setLevel('INFO')
     # Run the training pipeline
     run_lib.train(FLAGS.config, FLAGS.workdir)
+  elif FLAGS.mode == "sample":
+    # Create the working directory
+    tf.io.gfile.makedirs(FLAGS.workdir)
+    # Set logger so that it outputs to both console and file
+    # Make logging work for both disk and Google Cloud Storage
+    gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
+    handler = logging.StreamHandler(gfile_stream)
+    formatter = logging.Formatter('%(levelname)s - %(filename)s - %(asctime)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger = logging.getLogger()
+    logger.addHandler(handler)
+    logger.setLevel('INFO')
+    # Run the training pipeline
+    run_lib.sample(FLAGS.config, FLAGS.workdir)
   elif FLAGS.mode == "eval":
     # Run the evaluation pipeline
     run_lib.evaluate(FLAGS.config, FLAGS.workdir, FLAGS.eval_folder)

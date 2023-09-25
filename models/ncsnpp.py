@@ -20,6 +20,7 @@ import torch.nn as nn
 import functools
 import torch
 import numpy as np
+from utils import eprint, save_checkpoint, restore_checkpoint
 
 ResnetBlockDDPM = layerspp.ResnetBlockDDPMpp
 ResnetBlockBigGAN = layerspp.ResnetBlockBigGANpp
