@@ -49,18 +49,19 @@ def vesde_discretize(x, t, sde):
 def reverse_diffusion_discretize(x, t, model, sde):
   """Create discretized iteration rules for the reverse diffusion sampler."""
   f, G = vesde_discretize(x, t, sde)
-  rev_f = f - G[:, None, None, None] ** 2 * mutils.score_fn(model, sde, x, t, False)
+  score = mutils.score_fn(model, sde, x, t, False)
+  rev_f = f - G[:, None, None, None] ** 2 * score
   rev_G = G
-  return rev_f, rev_G
+  return rev_f, rev_G, score
 
 
 def reverse_diffusion_update_fn(model, sde, x, t):
-  f, G = reverse_diffusion_discretize(x, t, model, sde)
+  f, G, score = reverse_diffusion_discretize(x, t, model, sde)
   z = torch.randn_like(x)
   x_mean = x - f
   noise2 = 1.00 * G[:, None, None, None] * z
   x = x_mean + noise2
-  return x, x_mean
+  return x, x_mean, score
 
 def langevin_update_fn(model, sde, x, t, target_snr, n_steps):
   alpha = torch.ones_like(t)
@@ -157,19 +158,27 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
 
         x = x.requires_grad_()
 
+        # Time of the start of this step
         t = timesteps[i]
         vec_t = torch.ones(shape[0], device=t.device) * t
         dt = -1.0 / steps
+
+        # Euler sampler
+        """
         z = torch.randn_like(x)
         score, drift, diffusion = reverse_sde(model, sde, x, vec_t)
         x_mean = x + drift * dt
         new_x = x_mean + diffusion[:, None, None, None] * np.sqrt(-dt) * z
+        """
 
+        # PC sampler
+        x, x_mean = langevin_update_fn(model, sde, x, vec_t, snr, n_steps)
+        new_x, x_mean, score = reverse_diffusion_update_fn(model, sde, x, vec_t)
+
+        # Gradient step
         timestep = (t * (sde.N - 1) / sde.T).long()
         sigma = sde.discrete_sigmas.to(t.device)[timestep]
         x_tweedie = x + sigma*sigma * score
-
-        # Gradient step
         x_tweedie_measured = measure_fn(x_tweedie)
         diff = anti_measure_fn(x_tweedie, torch.abs(target_measurements - x_tweedie_measured))
         losses = torch.square(diff)
@@ -180,6 +189,7 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
 
         # Manifold constraint
         # Take phase from new_x and amplitude from y_t
+        # TODO: not every time, maybe every 10 iters?
         if run == 1 or i < 40:
             score2, drift2, diffusion2 = reverse_sde(model, sde, new_x, vec_t)
             x_tweedie2 = new_x + sigma*sigma * score2

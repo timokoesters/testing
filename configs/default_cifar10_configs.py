@@ -27,7 +27,7 @@ def get_default_configs():
 
   # sampling
   config.sampling = sampling = ml_collections.ConfigDict()
-  sampling.n_steps_each = 1
+  sampling.n_steps_each = 5 # for pc sampler
   sampling.noise_removal = True
   sampling.probability_flow = False
   sampling.snr = 0.16
