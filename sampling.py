@@ -22,7 +22,7 @@ import os
 import tensorflow as tf
 from torchvision.utils import make_grid, save_image
 import torch.nn.functional as F
-#import lpips as lp
+import lpips as lp
 from skimage.metrics import structural_similarity, peak_signal_noise_ratio
 from skimage.registration import phase_cross_correlation
 import torch
@@ -141,11 +141,11 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
   result = None
   total_results_measurement_error = None
 
-  for run in range(1, 3):
+  for run in range(1, 2):
     # STEPS nichtlinear?
     eprint("run " + str(run))
     steps = 100
-    iterations = 2
+    iterations = 10
     eprint("steps=" + str(steps) + ", iters=" + str(iterations))
     timesteps = torch.linspace(eps, sde.T, steps, device=device)
     total_results = None
@@ -164,16 +164,16 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         dt = -1.0 / steps
 
         # Euler sampler
-        """
         z = torch.randn_like(x)
         score, drift, diffusion = reverse_sde(model, sde, x, vec_t)
         x_mean = x + drift * dt
         new_x = x_mean + diffusion[:, None, None, None] * np.sqrt(-dt) * z
-        """
 
         # PC sampler
+        """
         x, x_mean = langevin_update_fn(model, sde, x, vec_t, snr, n_steps)
         new_x, x_mean, score = reverse_diffusion_update_fn(model, sde, x, vec_t)
+        """
 
         # Gradient step
         timestep = (t * (sde.N - 1) / sde.T).long()
@@ -190,7 +190,7 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         # Manifold constraint
         # Take phase from new_x and amplitude from y_t
         # TODO: not every time, maybe every 10 iters?
-        if run == 1 or i < 40:
+        if True:# i < 40:
             score2, drift2, diffusion2 = reverse_sde(model, sde, new_x, vec_t)
             x_tweedie2 = new_x + sigma*sigma * score2
             new_x = anti_measure_fn(x_tweedie2, target_measurements)
@@ -221,15 +221,12 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         total_results[comparisons] = result[comparisons]
         total_results_measurement_error[comparisons] = measurement_error[comparisons]
       #eprint("\n")
-      #eprint("lpips: " + str(lpips(targets, total_results).mean()))
-      #eprint("mse: " + str(mse(targets, total_results).mean().item()))
-      #eprint("mae: " + str(mae(targets, total_results).mean().item()))
-      #eprint("ssim: " + str(ssim(targets, total_results).mean()))
-      #eprint("coefficient: " + str((run+1) / 10.0))
-      registered_results = register(targets.detach().cpu().numpy(), total_results.detach().cpu().numpy())
-      ssimresult = ssim(targets.detach().cpu().numpy(), registered_results)
-      #eprint("ssim (registered): " + str(ssimresult))
-      eprint("ssim mean: " + str(ssimresult.mean()))
+      registered_results = torch.tensor(register(targets.detach().cpu().numpy(), total_results.detach().cpu().numpy()))
+      eprint("lpips: " + str(lpips(targets, registered_results).mean()))
+      eprint("mse: " + str(mse(targets.cpu(), registered_results).mean().item()))
+      eprint("mae: " + str(mae(targets.cpu(), registered_results).mean().item()))
+      ssimresult = ssim(targets.detach().cpu().numpy(), registered_results.numpy())
+      eprint("ssim: " + str(ssimresult.mean()))
       save_sample(sample_dir, run, samplei, inverse_scaler(total_results.detach()), str(ssimresult.mean()))
 
 
@@ -248,7 +245,7 @@ def lpips(true, pred, mode='vgg'):
         pred = F.interpolate(pred, size=64)
     
     loss_fn = lp.LPIPS(net=mode, verbose=False)
-    lps = loss_fn(true, pred).squeeze().detach().numpy()
+    lps = loss_fn(true.float(), pred.float()).squeeze().detach().numpy()
     return lps
 
 def mse(true, pred):
