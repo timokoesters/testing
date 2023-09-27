@@ -164,16 +164,16 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         dt = -1.0 / steps
 
         # Euler sampler
+        """
         z = torch.randn_like(x)
         score, drift, diffusion = reverse_sde(model, sde, x, vec_t)
         x_mean = x + drift * dt
         new_x = x_mean + diffusion[:, None, None, None] * np.sqrt(-dt) * z
+        """
 
         # PC sampler
-        """
         x, x_mean = langevin_update_fn(model, sde, x, vec_t, snr, n_steps)
         new_x, x_mean, score = reverse_diffusion_update_fn(model, sde, x, vec_t)
-        """
 
         # Gradient step
         timestep = (t * (sde.N - 1) / sde.T).long()
@@ -190,7 +190,7 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         # Manifold constraint
         # Take phase from new_x and amplitude from y_t
         # TODO: not every time, maybe every 10 iters?
-        if i < 40:
+        if True:
             score2, drift2, diffusion2 = reverse_sde(model, sde, new_x, vec_t)
             x_tweedie2 = new_x + sigma*sigma * score2
             new_x = anti_measure_fn(x_tweedie2, target_measurements)

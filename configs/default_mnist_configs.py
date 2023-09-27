@@ -8,7 +8,7 @@ def get_default_configs():
   config.training = training = ml_collections.ConfigDict()
 
   #config.training.batch_size = 10
-  config.training.batch_size = 1024
+  config.training.batch_size = 256
 
   training.n_iters = 1300001
 
@@ -24,7 +24,7 @@ def get_default_configs():
 
   # sampling
   config.sampling = sampling = ml_collections.ConfigDict()
-  sampling.n_steps_each = 5
+  sampling.n_steps_each = 2
   sampling.noise_removal = True
   sampling.probability_flow = False
   sampling.snr = 0.16
