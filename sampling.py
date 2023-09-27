@@ -184,8 +184,8 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         losses = torch.sum(losses, (-1, -2), keepdim=True)
         lossessum = torch.sum(losses)
         x_grad = torch.autograd.grad(lossessum, x)[0]
-        eprint("grad=", 0.2 * run)
-        new_x -= 0.2 * run * x_grad
+        eprint("grad=", (0.4 * run + 1.6))
+        new_x -= (0.4 * run + 1.6) * x_grad
 
         # Manifold constraint
         # Take phase from new_x and amplitude from y_t
