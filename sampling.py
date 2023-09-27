@@ -190,7 +190,7 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         # Manifold constraint
         # Take phase from new_x and amplitude from y_t
         # TODO: not every time, maybe every 10 iters?
-        if False:# i < 40:
+        if i < 40:
             score2, drift2, diffusion2 = reverse_sde(model, sde, new_x, vec_t)
             x_tweedie2 = new_x + sigma*sigma * score2
             new_x = anti_measure_fn(x_tweedie2, target_measurements)
