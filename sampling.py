@@ -132,7 +132,6 @@ def euler_sampler(sample_dir, step, model, sde, shape, inverse_scaler, snr, n_st
 
 
 def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scaler, snr, n_steps, probability_flow, continuous, denoise, device, eps, measure_fn, anti_measure_fn, target_measurements, targets):
-  # STATT EULER DEN PC SAMPLER?
   # auf google colab bis 1024 batch size
   # wandb zum evaluieren
   # wandb: layken.mahrus@moosbay.com
@@ -141,11 +140,11 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
   result = None
   total_results_measurement_error = None
 
-  for run in range(1, 2):
+  for run in range(1, 11):
     # STEPS nichtlinear?
     eprint("run " + str(run))
     steps = 100
-    iterations = 10
+    iterations = 2
     eprint("steps=" + str(steps) + ", iters=" + str(iterations))
     timesteps = torch.linspace(eps, sde.T, steps, device=device)
     total_results = None
@@ -164,16 +163,16 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         dt = -1.0 / steps
 
         # Euler sampler
-        """
         z = torch.randn_like(x)
         score, drift, diffusion = reverse_sde(model, sde, x, vec_t)
         x_mean = x + drift * dt
         new_x = x_mean + diffusion[:, None, None, None] * np.sqrt(-dt) * z
-        """
 
         # PC sampler
+        """
         x, x_mean = langevin_update_fn(model, sde, x, vec_t, snr, n_steps)
         new_x, x_mean, score = reverse_diffusion_update_fn(model, sde, x, vec_t)
+        """
 
         # Gradient step
         timestep = (t * (sde.N - 1) / sde.T).long()
@@ -185,7 +184,8 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         losses = torch.sum(losses, (-1, -2), keepdim=True)
         lossessum = torch.sum(losses)
         x_grad = torch.autograd.grad(lossessum, x)[0]
-        new_x -= 1.0 * x_grad
+        eprint("grad=", 0.2 * run)
+        new_x -= 0.2 * run * x_grad
 
         # Manifold constraint
         # Take phase from new_x and amplitude from y_t
