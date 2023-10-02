@@ -89,10 +89,21 @@ def ve_sde(x, t):
   return drift, diffusion
 
 
-def reverse_sde(model, sde, x, t):
+def reverse_sde_old(model, sde, x, t, next_t):
   drift, diffusion = ve_sde(x, t)
   score = mutils.score_fn(model, sde, x, t, False)
   drift = drift - diffusion[:, None, None, None] ** 2 * score
+  return score, drift, diffusion
+
+def reverse_sde(model, sde, x, t, next_t, nextnext_t):
+  score = mutils.score_fn(model, sde, x, t, False)
+  sigma_min = 0.01
+  sigma_max = 50.0
+  sigma_i2 = (sigma_min * (sigma_max /sigma_min) ** t) ** 2
+  sigma_next_i2 = (sigma_min * (sigma_max /sigma_min) ** next_t) ** 2
+  sigma_nextnext_i2 = (sigma_min * (sigma_max /sigma_min) ** nextnext_t) ** 2
+  drift = x + (sigma_i2 - sigma_next_i2)[:, None, None, None] * score
+  diffusion = torch.sqrt(sigma_next_i2 - sigma_nextnext_i2)
   return score, drift, diffusion
 
 
@@ -140,33 +151,39 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
   result = None
   total_results_measurement_error = None
 
-  for run in range(1, 11):
+  for run in range(1, 2):
     # STEPS nichtlinear?
     eprint("run " + str(run))
     steps = 100
-    iterations = 2
+    iterations = 10
     eprint("steps=" + str(steps) + ", iters=" + str(iterations))
-    timesteps = torch.linspace(eps, sde.T, steps, device=device)
+    timesteps = torch.linspace(eps, sde.T, steps, device=device) ** 1.5
     total_results = None
     for samplei in range(10, 10+iterations):
       # Initial sample
       x = sde.prior_sampling(shape).to(device)
 
-      for i in reversed(range(0, steps)):
+      for i in reversed(range(1, steps)):
         eprint("\rSampling: {}/{}".format(steps-i, steps), end='')
 
         x = x.requires_grad_()
 
         # Time of the start of this step
         t = timesteps[i]
+        next_t = timesteps[i-1]
+        if i >= 2:
+            nextnext_t = timesteps[i-2]
+        else:
+            nextnext_t = 0.0
+                    
         vec_t = torch.ones(shape[0], device=t.device) * t
-        dt = -1.0 / steps
+        vec_next_t = torch.ones(shape[0], device=t.device) * next_t
+        vec_nextnext_t = torch.ones(shape[0], device=t.device) * nextnext_t
 
         # Euler sampler
         z = torch.randn_like(x)
-        score, drift, diffusion = reverse_sde(model, sde, x, vec_t)
-        x_mean = x + drift * dt
-        new_x = x_mean + diffusion[:, None, None, None] * np.sqrt(-dt) * z
+        score, drift, diffusion = reverse_sde(model, sde, x, vec_t, vec_next_t, vec_nextnext_t)
+        new_x = drift + diffusion[:, None, None, None] * z
 
         # PC sampler
         """
@@ -176,7 +193,12 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
 
         # Gradient step
         timestep = (t * (sde.N - 1) / sde.T).long()
-        sigma = sde.discrete_sigmas.to(t.device)[timestep]
+
+        sigma_min = 0.01
+        sigma_max = 50.0
+        sigma = sigma_min * (sigma_max /sigma_min) ** t
+
+        #sigma = sde.discrete_sigmas.to(t.device)[timestep]
         x_tweedie = x + sigma*sigma * score
         x_tweedie_measured = measure_fn(x_tweedie)
         diff = anti_measure_fn(x_tweedie, torch.abs(target_measurements - x_tweedie_measured))
@@ -184,21 +206,21 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         losses = torch.sum(losses, (-1, -2), keepdim=True)
         lossessum = torch.sum(losses)
         x_grad = torch.autograd.grad(lossessum, x)[0]
-        eprint("grad=", (0.4 * run + 1.6))
         new_x -= 1.0 * x_grad
 
         # Manifold constraint
         # Take phase from new_x and amplitude from y_t
         # TODO: not every time, maybe every 10 iters?
-        if True:
-            score2, drift2, diffusion2 = reverse_sde(model, sde, new_x, vec_t)
-            x_tweedie2 = new_x + sigma*sigma * score2
+        if i < 60:
+            score2 = mutils.score_fn(model, sde, new_x, vec_next_t, False)
+            sigma2 = sigma_min * (sigma_max /sigma_min) ** next_t
+            x_tweedie2 = new_x + sigma2*sigma2 * score2
             new_x = anti_measure_fn(x_tweedie2, target_measurements)
             z = torch.randn_like(x)
-            mean, std = sde.marginal_prob(new_x, t)
-            #new_x = mean + sigma*z
-            z = torch.randn_like(x)
-            new_x = anti_measure_fn(new_x, measure_fn(sigma*z + targets))
+            new_x = new_x + diffusion[:, None, None, None]*z
+
+            #z = torch.randn_like(x)
+            #new_x = anti_measure_fn(new_x, measure_fn(sigma*z + targets))
 
         x = new_x.detach()
 
@@ -207,6 +229,7 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         if i % 10 == 5:
           save_sample(sample_dir, 1000, steps-i, inverse_scaler(x_tweedie.detach()))
           #save_sample(sample_dir, 1000, steps-i, inverse_scaler(new_x.detach()))
+          #save_sample(sample_dir, 1000, steps-i, inverse_scaler(x_tweedie2.detach()))
                     
         #elif (i-1) % 25 == 0:
         #  save_sample(sample_dir, step, steps-i, inverse_scaler(measure_fn(x_tweedie).detach()))
