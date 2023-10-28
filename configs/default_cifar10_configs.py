@@ -7,7 +7,7 @@ def get_default_configs():
   # training
   config.training = training = ml_collections.ConfigDict()
 
-  #config.training.batch_size = 16
+  #config.training.batch_size = 64
   config.training.batch_size = 4
 
   training.n_iters = 1300001

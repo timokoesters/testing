@@ -210,9 +210,7 @@ def sample(config, workdir):
     #anti_measure_fn = lambda x_tweedie, image: image
 
     def measure_fn(image):
-      # Add noise
-      z = torch.randn_like(image)
-      measurements = torch.abs(torch.fft.fft2(image + 0.0*z))
+      measurements = torch.abs(torch.fft.fft2(image))
       return measurements
 
     def anti_measure_fn(x_tweedie, measured_diff):
@@ -221,6 +219,9 @@ def sample(config, workdir):
       return torch.real(torch.fft.ifft2((measured_diff / (torch.abs(x_tweedie_fft)+0.001) * x_tweedie_fft)))
 
     measurements = measure_fn(targets)
+    # Add noise
+    z = torch.randn_like(measurements)
+    #measurements += 0.1* z
 
     sample, n = sampling.euler_sampler_conditional(sample_dir, step, model, sde, sampling_shape, inverse_scaler, config.sampling.snr, config.sampling.n_steps_each, config.sampling.probability_flow, config.training.continuous, config.sampling.noise_removal, config.device, sampling_eps, measure_fn, anti_measure_fn, measurements, targets)
     ema.restore(model.parameters())
