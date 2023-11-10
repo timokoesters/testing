@@ -36,7 +36,7 @@ def get_config():
   # model
   model = config.model
   model.name = 'ncsnpp'
-  model.scale_by_sigma = True
+  model.scale_by_sigma = False
   model.ema_rate = 0.999
   model.normalization = 'GroupNorm'
   model.nonlinearity = 'swish'

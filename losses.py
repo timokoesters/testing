@@ -65,13 +65,17 @@ def loss_fn(model, sde, batch, reduce_mean, train):
 
   eps = 1e-5
   
-  t = torch.rand(batch.shape[0], device=batch.device) * (sde.T - eps) + eps
+  t = torch.full((batch.shape[0],), sde.T, device=batch.device) #torch.rand(batch.shape[0], device=batch.device) * (sde.T - eps) + eps
   z = torch.randn_like(batch)
   mean, std = sde.marginal_prob(batch, t)
-  perturbed_data = mean + std[:, None, None, None] * z
+  def measure_fn(image):
+    measurements = torch.abs(torch.fft.fft2(image))
+    return measurements
+  perturbed_data = measure_fn(batch)
+
   score = mutils.score_fn(model, sde, perturbed_data, t, train)
 
-  losses = torch.square(score * std[:, None, None, None] + z)
+  losses = torch.square(score - batch)
 
   reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
   losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)

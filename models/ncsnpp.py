@@ -230,7 +230,8 @@ class NCSNpp(nn.Module):
 
     self.all_modules = nn.ModuleList(modules)
 
-  def forward(self, x, time_cond):
+  def forward(self, x):
+    time_cond = torch.tensor(np.zeros((16,)), device=x.device, dtype=x.dtype)
     # timestep/noise_level embedding; only for continuous training
     modules = self.all_modules
     m_idx = 0

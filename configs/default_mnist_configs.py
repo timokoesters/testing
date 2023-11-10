@@ -7,8 +7,8 @@ def get_default_configs():
   # training
   config.training = training = ml_collections.ConfigDict()
 
-  # config.training.batch_size = 25
-  config.training.batch_size = 1024
+  config.training.batch_size = 16
+  # config.training.batch_size = 1024
 
   training.n_iters = 1300001
 
@@ -70,7 +70,7 @@ def get_default_configs():
   optim.grad_clip = 1.
 
   config.seed = 42
-  config.device = 'cuda:0'
-  # config.device = 'cpu'
+  # config.device = 'cuda:0'
+  config.device = 'cpu'
 
   return config

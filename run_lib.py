@@ -28,6 +28,7 @@ import sys
 
 import numpy as np
 import tensorflow as tf
+import torchinfo
 import logging
 # Keep the import below for registering all model definitions
 from models import ddpm, ncsnv2, ncsnpp
@@ -43,9 +44,10 @@ from absl import flags
 import torch
 from torch.utils import tensorboard
 from torchvision.transforms import GaussianBlur
+from torchvision.utils import make_grid, save_image
 from utils import eprint, save_checkpoint, restore_checkpoint
 
-import wandb
+# import wandb
 
 FLAGS = flags.FLAGS
 
@@ -146,14 +148,43 @@ def train(config, workdir):
       logging.info("\nstep: %d, eval_loss: %.5e" % (step, eval_loss.item()))
 
     # Save a checkpoint periodically and generate samples if needed
-    if step != -1 and step % 1000 == 0 or step == num_train_steps:
+    if step != -1 and step % 100 == 0 or step == num_train_steps:
       eprint();
       # Save the checkpoint.
       save_step = step
       save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint_{save_step}.pth'), state)
 
+      eval_batch = torch.from_numpy(next(eval_iter)['image']._numpy()).to(config.device).float()
+      eval_batch = eval_batch.permute(0, 3, 1, 2)
+      eval_batch = scaler(eval_batch)
+      def measure_fn(image):
+        measurements = torch.abs(torch.fft.fft2(image))
+        return measurements
+      perturbed_data = measure_fn(eval_batch)
+      t = torch.full((eval_batch.shape[0],), sde.T, device=eval_batch.device)
+      result = mutils.score_fn(model, sde, perturbed_data, t, train)
+
+      registered_results = torch.tensor(sampling.register(eval_batch.detach().cpu().numpy(), result.detach().cpu().numpy()))
+      eprint("lpips: " + str(sampling.lpips(eval_batch, registered_results).mean()))
+      eprint("mse: " + str(sampling.mse(eval_batch.cpu(), registered_results).mean().item()))
+      eprint("mae: " + str(sampling.mae(eval_batch.cpu(), registered_results).mean().item()))
+      ssimresult = sampling.ssim(eval_batch.detach().cpu().numpy(), registered_results.numpy())
+      eprint("ssim: " + str(ssimresult.mean()))
+
+      nrow = int(np.sqrt(eval_batch.shape[0]))
+      # normal
+      image_grid = make_grid(eval_batch, nrow, padding=2)
+      with tf.io.gfile.GFile(
+          os.path.join(sample_dir, "train_sample_{}_before.png".format(step)), "wb") as fout:
+          save_image(image_grid, fout)
+      # reconstructed
+      image_grid = make_grid(result, nrow, padding=2)
+      with tf.io.gfile.GFile(
+          os.path.join(sample_dir, "train_sample_{}_after.png".format(step)), "wb") as fout:
+          save_image(image_grid, fout)
+
       # Generate and save samples
-      if config.training.snapshot_sampling:
+      if False and config.training.snapshot_sampling:
         ema.store(model.parameters())
         ema.copy_to(model.parameters())
         sample, n = sampling.euler_sampler(sample_dir, step, model, sde, sampling_shape, inverse_scaler, config.sampling.snr, config.sampling.n_steps_each, config.sampling.probability_flow, config.training.continuous, config.sampling.noise_removal, config.device, sampling_eps)
@@ -167,6 +198,11 @@ def sample(config, workdir):
 
   # Initialize model.
   model = mutils.create_model(config)
+
+  # Building sampling functions
+  sampling_shape = (config.training.batch_size, config.data.num_channels,
+                    config.data.image_size, config.data.image_size)
+
   ema = ExponentialMovingAverage(model.parameters(), decay=config.model.ema_rate)
   optimizer = losses.get_optimizer(config, model.parameters())
   state = dict(optimizer=optimizer, model=model, ema=ema, step=0)
@@ -191,9 +227,7 @@ def sample(config, workdir):
   sde = sde_lib.VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=config.model.num_scales, device=config.device)
   sampling_eps = 1e-5
 
-  # Building sampling functions
-  sampling_shape = (config.training.batch_size, config.data.num_channels,
-                    config.data.image_size, config.data.image_size)
+  eprint(torchinfo.summary(model, input_size=sampling_shape))
 
   for step in range(0, 1):
     # Generate and save samples
