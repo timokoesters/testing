@@ -76,7 +76,7 @@ def langevin_update_fn(model, sde, x, t, target_snr, n_steps):
     diff = step_size[:, None, None, None] * grad
     x_mean = x + diff
     noise2 = 1.00 * torch.sqrt(step_size * 2)[:, None, None, None] * noise
-    x = x_mean + noise2
+    x = x_mean.detach() + noise2.detach()
 
   return x, x_mean
 
@@ -161,10 +161,11 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
   for run in range(1, 2):
     # STEPS nichtlinear?
     eprint("run " + str(run))
-    steps = 400
+    steps = 100
     iterations = 10
     eprint("steps=" + str(steps) + ", iters=" + str(iterations))
     timesteps = torch.linspace(eps, sde.T, steps, device=device)
+    #timesteps = timesteps ** 0.375
     #timesteps[timesteps<0.5] = ((timesteps[timesteps<0.5] * 2.0) ** 0.5) / 2.0
     #timesteps[timesteps>0.5] = ((timesteps[timesteps>0.5] * 2.0 - 1.0) ** 2.0) / 2.0 + 0.5
     total_results = None
@@ -194,9 +195,11 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         # score, drift, diffusion = reverse_sde_old(model, sde, x, vec_t, vec_next_t, 1.0 / steps)
         score, drift, diffusion = reverse_sde(model, sde, x, vec_t, vec_next_t)
         new_x = drift + diffusion * z
+
         # PC sampler
         """
         x, x_mean = langevin_update_fn(model, sde, x, vec_t, snr, n_steps)
+        x = x.requires_grad_()
         new_x, x_mean, score = reverse_diffusion_update_fn(model, sde, x, vec_t)
         """
 
@@ -217,12 +220,12 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         x_grad = torch.autograd.grad(lossessum, x)[0]
         #sigma_delta = (2 * (sigma_min * (sigma_max / sigma_min) ** t) ** 2 * math.log(sigma_max / sigma_min))
         #dt = (t - next_t)
-        new_x -= 1.0 * x_grad #/ losses.sqrt()
+        new_x -= 0.1 * x_grad
 
         # Manifold constraint
         # Take phase from new_x and amplitude from y_t
         # TODO: not every time, maybe every 10 iters?
-        if True or i < 60:
+        if False: #and i < 60:
             score2 = mutils.score_fn(model, sde, new_x, vec_next_t, False)
             sigma2 = sigma_min * (sigma_max /sigma_min) ** next_t
             x_tweedie2 = new_x + sigma2*sigma2 * score2

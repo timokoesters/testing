@@ -157,10 +157,16 @@ def train(config, workdir):
       eval_batch = torch.from_numpy(next(eval_iter)['image']._numpy()).to(config.device).float()
       eval_batch = eval_batch.permute(0, 3, 1, 2)
       eval_batch = scaler(eval_batch)
-      def measure_fn(image):
-        measurements = torch.abs(torch.fft.fft2(image))
-        return measurements
+      # def measure_fn(image):
+      #   measurements = torch.abs(torch.fft.fft2(image))
+      #   return measurements
+      measure_fn = GaussianBlur(5, 3.0)
+      # def measure_fn(image):
+        # measurements = torch.abs(torch.fft.fft2(image))
+        # return measurements
       perturbed_data = measure_fn(eval_batch)
+      z = torch.randn_like(perturbed_data)
+      perturbed_data += 0.02 * z;
       t = torch.full((eval_batch.shape[0],), sde.T, device=eval_batch.device)
       result = mutils.score_fn(model, sde, perturbed_data, t, train)
 
@@ -240,9 +246,10 @@ def sample(config, workdir):
     batch = scaler(batch)
     targets = batch
 
-    #measure_fn = GaussianBlur(15, 2.0)
-    #anti_measure_fn = lambda x_tweedie, image: image
+    measure_fn = GaussianBlur(5, 3.0)
+    anti_measure_fn = lambda x_tweedie, image: image
 
+    """
     def measure_fn(image):
       measurements = torch.abs(torch.fft.fft2(image))
       return measurements
@@ -251,11 +258,17 @@ def sample(config, workdir):
       # Take phase from x_tweedie and amplitude from measured_diff
       x_tweedie_fft = torch.fft.fft2(x_tweedie)
       return torch.real(torch.fft.ifft2((measured_diff / (torch.abs(x_tweedie_fft)+0.001) * x_tweedie_fft)))
+    """
 
     measurements = measure_fn(targets)
     # Add noise
     z = torch.randn_like(measurements)
-    #measurements += 0.1* z
+    measurements += 0.02 * z;
+    # Salt and Pepper
+    # z = torch.rand_like(measurements)
+    # measurements[z<0.02] = 1.0
+    # z = torch.rand_like(measurements)
+    # measurements[z<0.02] = 0.0
 
     sample, n = sampling.euler_sampler_conditional(sample_dir, step, model, sde, sampling_shape, inverse_scaler, config.sampling.snr, config.sampling.n_steps_each, config.sampling.probability_flow, config.training.continuous, config.sampling.noise_removal, config.device, sampling_eps, measure_fn, anti_measure_fn, measurements, targets)
     ema.restore(model.parameters())
