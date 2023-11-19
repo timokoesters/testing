@@ -161,8 +161,8 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
   for run in range(1, 2):
     # STEPS nichtlinear?
     eprint("run " + str(run))
-    steps = 400
-    iterations = 10
+    steps = 1000
+    iterations = 1
     eprint("steps=" + str(steps) + ", iters=" + str(iterations))
     timesteps = torch.linspace(eps, sde.T, steps, device=device)
     #timesteps[timesteps<0.5] = ((timesteps[timesteps<0.5] * 2.0) ** 0.5) / 2.0
@@ -217,24 +217,24 @@ def euler_sampler_conditional(sample_dir, step, model, sde, shape, inverse_scale
         x_grad = torch.autograd.grad(lossessum, x)[0]
         #sigma_delta = (2 * (sigma_min * (sigma_max / sigma_min) ** t) ** 2 * math.log(sigma_max / sigma_min))
         #dt = (t - next_t)
-        new_x -= 1.0 * x_grad #/ losses.sqrt()
+        new_x -= 0.05 * x_grad #/ losses.sqrt()
 
         # Manifold constraint
         # Take phase from new_x and amplitude from y_t
         # TODO: not every time, maybe every 10 iters?
-        if True or i < 60:
-            score2 = mutils.score_fn(model, sde, new_x, vec_next_t, False)
-            sigma2 = sigma_min * (sigma_max /sigma_min) ** next_t
-            x_tweedie2 = new_x + sigma2*sigma2 * score2
+        # if True or i < 60:
+        if i % 10 == 0:
+            # Renoising
+            # score2 = mutils.score_fn(model, sde, new_x, vec_next_t, False)
+            # sigma2 = sigma_min * (sigma_max /sigma_min) ** next_t
+            # x_tweedie2 = new_x + sigma2*sigma2 * score2
+            # new_x = anti_measure_fn(x_tweedie2, target_measurements)
+            # z = torch.randn_like(x)
+            # new_x = new_x + sigma2*z
 
-            #new_x = anti_measure_fn(x_tweedie2, target_measurements)
-            new_x = x_tweedie2 # for renoising in deblurring
-
+            # Hypothetical constraint
             z = torch.randn_like(x)
-            new_x = new_x + sigma2*z
-
-            #z = torch.randn_like(x)
-            #new_x = anti_measure_fn(new_x, measure_fn(sigma*z + targets))
+            new_x = anti_measure_fn(new_x, measure_fn(sigma*z + targets))
 
         x = new_x.detach()
 
